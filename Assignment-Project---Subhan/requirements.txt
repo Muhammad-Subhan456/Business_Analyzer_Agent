@@ -16,6 +16,10 @@ lxml>=5.0.0
 
 # PDF Processing
 pypdf>=5.0.0
+weasyprint>=60.0  # For PDF generation from HTML
+markdown>=3.5.0  # For markdown to HTML conversion
+xhtml2pdf>=0.2.11  # Alternative PDF generator (fallback)
+reportlab>=4.0.0  # Final fallback PDF generator
 
 # Data Processing
 pandas>=2.0.0

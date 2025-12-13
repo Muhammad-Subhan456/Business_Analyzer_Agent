@@ -428,6 +428,76 @@ def render_sidebar():
         
         st.markdown("---")
         
+        # Database Viewer Section
+        with st.expander("📊 View Stored Reports", expanded=False):
+            try:
+                from database.db_manager import DatabaseManager
+                db = DatabaseManager()
+                
+                # Get statistics
+                stats = db.get_stats()
+                if stats.get('total_queries', 0) > 0:
+                    st.markdown(f"**Total Reports:** {stats.get('total_reports', 0)}")
+                    st.markdown(f"**Success Rate:** {stats.get('success_rate', 0):.1f}%")
+                    
+                    # Get recent queries
+                    recent = db.get_recent_queries(limit=5)
+                    if recent:
+                        st.markdown("**Recent Analyses:**")
+                        for query in recent:
+                            status_icon = "✅" if query['status'] == 'completed' else "⏳" if query['status'] == 'pending' else "❌"
+                            st.markdown(f"{status_icon} **{query['ticker']}** - {query['analysis_type']}")
+                            st.caption(f"Created: {query['created_at']}")
+                            
+                            # Show report if available
+                            reports = db.get_reports_by_ticker(query['ticker'], limit=1)
+                            if reports and reports[0].get('query_id') == query['id']:
+                                with st.expander(f"View Report for {query['ticker']}"):
+                                    report = reports[0]
+                                    st.markdown(f"**Word Count:** {report.get('word_count', 'N/A')}")
+                                    st.markdown(f"**Generated:** {report.get('generated_at', 'N/A')}")
+                                    
+                                    # Show metadata if available
+                                    metadata = db.get_metadata(query['id'])
+                                    if metadata:
+                                        col1, col2 = st.columns(2)
+                                        with col1:
+                                            st.metric("Completeness", f"{metadata.get('data_completeness', 0):.1%}")
+                                        with col2:
+                                            st.metric("Confidence", f"{metadata.get('confidence_score', 0):.1%}")
+                                    
+                                    # Show FULL report (not truncated)
+                                    content = report.get('report_content', '')
+                                    st.markdown("**Full Report:**")
+                                    # Display complete report without truncation
+                                    st.markdown(content)
+                                    
+                                    # Also provide download option
+                                    try:
+                                        pdf_data = markdown_to_pdf(content, query['ticker'], str(query['created_at']))
+                                        st.download_button(
+                                            label="📥 Download PDF",
+                                            data=pdf_data,
+                                            file_name=f"{query['ticker']}_report_{query['id']}.pdf",
+                                            mime="application/pdf",
+                                            key=f"download_{query['id']}"
+                                        )
+                                    except:
+                                        st.download_button(
+                                            label="📥 Download Markdown",
+                                            data=content,
+                                            file_name=f"{query['ticker']}_report_{query['id']}.md",
+                                            mime="text/markdown",
+                                            key=f"download_md_{query['id']}"
+                                        )
+                else:
+                    st.info("No reports stored yet. Run an analysis to see data here!")
+                    
+            except Exception as e:
+                st.warning(f"Database not available: {str(e)[:50]}")
+        
+        st.markdown("---")
+        
         # Features list
         st.markdown("### 🚀 Features")
         st.markdown("""
@@ -450,6 +520,10 @@ def render_sidebar():
         <div class="feature-item">
             <span class="feature-icon">📄</span>
             <span class="feature-text">Professional report generation</span>
+        </div>
+        <div class="feature-item">
+            <span class="feature-icon">💾</span>
+            <span class="feature-text">Automatic database storage</span>
         </div>
         """, unsafe_allow_html=True)
         
@@ -599,6 +673,15 @@ def run_analysis(ticker, company_name, analysis_type, period):
             progress_bar.progress(1.0)
             status_text.markdown("**✅ Analysis Complete!**")
             
+            # Show database save confirmation
+            try:
+                from database.db_manager import DatabaseManager
+                db = DatabaseManager()
+                stats = db.get_stats()
+                st.success(f"💾 Report saved to database! (Total reports: {stats.get('total_reports', 0)})")
+            except:
+                pass  # Database might not be available
+            
             # Store in session state
             st.session_state['report'] = report
             st.session_state['ticker'] = ticker
@@ -616,6 +699,206 @@ def run_analysis(ticker, company_name, analysis_type, period):
             st.session_state['ticker'],
             st.session_state['timestamp']
         )
+
+
+def markdown_to_pdf(markdown_content: str, ticker: str, timestamp: str) -> bytes:
+    """
+    Convert markdown content to PDF bytes using ReportLab (production-safe).
+    This generates a real, standards-compliant PDF that opens in all viewers.
+    """
+    from io import BytesIO
+    import re
+    from reportlab.lib.pagesizes import A4
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.lib.colors import HexColor
+    
+    try:
+        buffer = BytesIO()
+        
+        # Create PDF document
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=A4,
+            rightMargin=72,
+            leftMargin=72,
+            topMargin=72,
+            bottomMargin=72
+        )
+        
+        # Get styles
+        styles = getSampleStyleSheet()
+        
+        # Create custom styles
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Title'],
+            fontSize=20,
+            textColor=HexColor('#14b8a6'),
+            spaceAfter=12,
+            alignment=1  # Center
+        )
+        
+        heading1_style = ParagraphStyle(
+            'CustomHeading1',
+            parent=styles['Heading1'],
+            fontSize=16,
+            textColor=HexColor('#14b8a6'),
+            spaceAfter=12,
+            spaceBefore=20
+        )
+        
+        heading2_style = ParagraphStyle(
+            'CustomHeading2',
+            parent=styles['Heading2'],
+            fontSize=14,
+            textColor=HexColor('#22d3ee'),
+            spaceAfter=10,
+            spaceBefore=16
+        )
+        
+        heading3_style = ParagraphStyle(
+            'CustomHeading3',
+            parent=styles['Heading3'],
+            fontSize=12,
+            textColor=HexColor('#64748b'),
+            spaceAfter=8,
+            spaceBefore=12
+        )
+        
+        normal_style = ParagraphStyle(
+            'CustomNormal',
+            parent=styles['Normal'],
+            fontSize=10,
+            leading=14,
+            spaceAfter=6
+        )
+        
+        # Build story (content)
+        story = []
+        
+        # Title
+        title = Paragraph(f"<b>Analysis Report: {ticker}</b>", title_style)
+        story.append(title)
+        story.append(Spacer(1, 6))
+        
+        # Timestamp
+        timestamp_para = Paragraph(f"<i>Generated: {timestamp}</i>", normal_style)
+        story.append(timestamp_para)
+        story.append(Spacer(1, 12))
+        
+        # Helper function to escape HTML and convert markdown
+        def markdown_to_paragraph(text, style):
+            """Convert markdown text to ReportLab Paragraph."""
+            if not text.strip():
+                return None
+            
+            # Escape HTML special characters
+            text = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            
+            # Convert markdown bold **text** to <b>text</b>
+            text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+            
+            # Convert markdown italic *text* to <i>text</i> (but not if already bold)
+            text = re.sub(r'(?<!\*)\*([^*]+?)\*(?!\*)', r'<i>\1</i>', text)
+            
+            # Convert markdown code `text` to <font face="Courier">text</font>
+            text = re.sub(r'`([^`]+?)`', r'<font face="Courier">\1</font>', text)
+            
+            return Paragraph(text, style)
+        
+        # Parse markdown content line by line
+        lines = markdown_content.split('\n')
+        in_list = False
+        
+        for i, line in enumerate(lines):
+            line = line.rstrip()
+            
+            # Empty line
+            if not line.strip():
+                if in_list:
+                    story.append(Spacer(1, 3))
+                else:
+                    story.append(Spacer(1, 6))
+                in_list = False
+                continue
+            
+            # Headers
+            if line.startswith('# '):
+                text = line[2:].strip()
+                para = markdown_to_paragraph(text, heading1_style)
+                if para:
+                    story.append(para)
+                in_list = False
+                
+            elif line.startswith('## '):
+                text = line[3:].strip()
+                para = markdown_to_paragraph(text, heading2_style)
+                if para:
+                    story.append(para)
+                in_list = False
+                
+            elif line.startswith('### '):
+                text = line[4:].strip()
+                para = markdown_to_paragraph(text, heading3_style)
+                if para:
+                    story.append(para)
+                in_list = False
+                
+            elif line.startswith('#### '):
+                text = line[5:].strip()
+                para = markdown_to_paragraph(f"<b>{text}</b>", normal_style)
+                if para:
+                    story.append(para)
+                in_list = False
+                
+            # Horizontal rule
+            elif line.strip() == '---' or line.strip() == '***':
+                story.append(Spacer(1, 12))
+                in_list = False
+                
+            # List items
+            elif line.startswith('- ') or line.startswith('* ') or line.startswith('+ '):
+                text = line[2:].strip()
+                para = markdown_to_paragraph(f"• {text}", normal_style)
+                if para:
+                    story.append(para)
+                in_list = True
+                
+            # Numbered list
+            elif re.match(r'^\d+\.\s+', line):
+                text = re.sub(r'^\d+\.\s+', '', line)
+                para = markdown_to_paragraph(text, normal_style)
+                if para:
+                    story.append(para)
+                in_list = True
+                
+            # Regular paragraph
+            else:
+                para = markdown_to_paragraph(line, normal_style)
+                if para:
+                    story.append(para)
+                in_list = False
+        
+        # Build PDF
+        doc.build(story)
+        
+        # Get PDF bytes
+        buffer.seek(0)
+        pdf_data = buffer.getvalue()
+        buffer.close()
+        
+        # Verify it's a valid PDF (starts with %PDF)
+        if pdf_data.startswith(b'%PDF'):
+            return pdf_data
+        else:
+            raise Exception("Generated file is not a valid PDF")
+            
+    except ImportError as e:
+        raise Exception(f"ReportLab is required for PDF generation. Install with: pip install reportlab. Error: {e}")
+    except Exception as e:
+        raise Exception(f"PDF generation failed: {str(e)}")
 
 
 def display_report(report, ticker, timestamp):
@@ -636,23 +919,34 @@ def display_report(report, ticker, timestamp):
         """, unsafe_allow_html=True)
     
     with col2:
-        # Download button
-        st.download_button(
-            label="📥 Download Report",
-            data=report,
-            file_name=f"{ticker}_analysis_{timestamp.replace(':', '-').replace(' ', '_')}.md",
-            mime="text/markdown"
-        )
+        # Generate PDF
+        try:
+            pdf_data = markdown_to_pdf(report, ticker, timestamp)
+            file_name = f"{ticker}_analysis_{timestamp.replace(':', '-').replace(' ', '_')}.pdf"
+            
+            st.download_button(
+                label="📥 Download PDF",
+                data=pdf_data,
+                file_name=file_name,
+                mime="application/pdf"
+            )
+        except Exception as e:
+            # Fallback to markdown if PDF generation fails
+            st.download_button(
+                label="📥 Download Report",
+                data=report,
+                file_name=f"{ticker}_analysis_{timestamp.replace(':', '-').replace(' ', '_')}.md",
+                mime="text/markdown"
+            )
+            st.warning(f"PDF generation failed, downloading as markdown: {str(e)[:50]}")
     
-    # Report content
-    st.markdown(f"""
-    <div class="report-container">
-        {report}
-    </div>
-    """, unsafe_allow_html=True)
+    # Report content - Display FULL report (not truncated)
+    st.markdown("---")
+    st.markdown("### 📄 Full Report")
     
-    # Also show as expandable markdown for better formatting
-    with st.expander("📄 View Raw Markdown"):
+    # Display full report using markdown - this ensures no truncation
+    # Use a container with proper styling
+    with st.container():
         st.markdown(report)
 
 
