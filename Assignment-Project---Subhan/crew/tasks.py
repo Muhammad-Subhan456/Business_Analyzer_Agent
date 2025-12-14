@@ -274,15 +274,20 @@ class BusinessAnalysisTasks:
         agent: Agent,
         company_name: str,
         ticker: str,
-        context_tasks: List[Task]
+        context_tasks: List[Task],
+        additional_context: str = ""
     ) -> Task:
         """
         Task: Write the final comprehensive business report
         Agent: Report Writer Agent
+        
+        Args:
+            additional_context: Optional additional context (e.g., PDF content) to include
         """
         return Task(
             description=f"""
             Create a comprehensive Business Analysis Report for {company_name} ({ticker}).
+            {additional_context}
             
             REPORT STRUCTURE:
             

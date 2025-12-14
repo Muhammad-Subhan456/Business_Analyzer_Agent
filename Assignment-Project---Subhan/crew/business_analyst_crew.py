@@ -262,13 +262,14 @@ class BusinessAnalystCrew:
             
             raise
     
-    def quick_analysis(self, ticker: str) -> str:
+    def quick_analysis(self, ticker: str, additional_context: Optional[str] = None) -> str:
         """
         Run a quick analysis with financial data and competitor analysis.
         Includes competitor analysis for comprehensive reports.
         
         Args:
             ticker: Stock ticker symbol
+            additional_context: Optional additional context (e.g., PDF content) to include in analysis
             
         Returns:
             Quick financial analysis report with competitor analysis
@@ -322,6 +323,21 @@ class BusinessAnalystCrew:
         )
         
         # Task 5: Final Report (includes competitor analysis)
+        # Include additional context (e.g., PDF) in report task description if provided
+        report_description_extra = ""
+        if additional_context:
+            # Truncate to prevent token overflow
+            context_preview = additional_context[:5000] if len(additional_context) > 5000 else additional_context
+            report_description_extra = f"""
+            
+            ADDITIONAL CONTEXT FROM UPLOADED DOCUMENT:
+            The following content was extracted from an uploaded PDF document. Please incorporate relevant insights from this document into your analysis:
+            
+            {context_preview}
+            
+            Note: If the document contains financial data, company information, or strategic insights, integrate these into the appropriate sections of your report.
+            """
+        
         write_report_task = self.tasks.write_final_report_task(
             agent=self.report_writer,
             company_name=company_name,
@@ -330,7 +346,8 @@ class BusinessAnalystCrew:
                 fetch_stock_task,
                 analyze_financials_task,
                 analyze_competitors_task
-            ]
+            ],
+            additional_context=report_description_extra
         )
         
         crew = Crew(

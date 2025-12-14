@@ -34,6 +34,7 @@ streamlit>=1.30.0
 # Utilities
 python-dotenv>=1.0.0
 pydantic>=2.0.0
+python-docx>=1.1.0  # For Word document generation
 
 # Optional: For better async support
 aiohttp>=3.9.0

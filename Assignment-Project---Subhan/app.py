@@ -354,6 +354,38 @@ st.markdown("""
     ::-webkit-scrollbar-thumb:hover {
         background: var(--accent-primary);
     }
+    
+    /* Chat interface styling */
+    .stChatMessage {
+        padding: 1rem;
+        margin: 0.5rem 0;
+        border-radius: 12px;
+    }
+    
+    [data-testid="stChatMessage"] {
+        background: var(--bg-secondary);
+        border: 1px solid var(--border-color);
+    }
+    
+    [data-testid="stChatMessageUser"] {
+        background: linear-gradient(135deg, rgba(20, 184, 166, 0.1) 0%, rgba(34, 211, 238, 0.1) 100%);
+        border: 1px solid rgba(20, 184, 166, 0.3);
+    }
+    
+    [data-testid="stChatInput"] {
+        background: var(--bg-tertiary);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+    }
+    
+    /* PDF upload styling */
+    .uploadedFile {
+        background: var(--bg-secondary);
+        border: 1px solid var(--accent-primary);
+        border-radius: 12px;
+        padding: 1rem;
+        margin: 1rem 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -950,18 +982,315 @@ def display_report(report, ticker, timestamp):
         st.markdown(report)
 
 
+def initialize_chat_state():
+    """Initialize chat-related session state variables."""
+    if 'messages' not in st.session_state:
+        st.session_state.messages = []
+    if 'pdf_content' not in st.session_state:
+        st.session_state.pdf_content = None
+    if 'pdf_filename' not in st.session_state:
+        st.session_state.pdf_filename = None
+
+
+def render_chat_interface():
+    """Render the interactive chat interface."""
+    st.markdown("""
+    <h1>💬 AI Business Analyst Chat</h1>
+    <p style="color: #94a3b8; font-size: 1.1rem; margin-bottom: 2rem;">
+        Chat with the AI analyst. Ask questions, request analyses, or upload PDFs for analysis.
+    </p>
+    """, unsafe_allow_html=True)
+    
+    # PDF Upload Section
+    with st.expander("📄 Upload PDF Document", expanded=False):
+        uploaded_file = st.file_uploader(
+            "Choose a PDF file",
+            type=['pdf'],
+            help="Upload a PDF document (e.g., annual report, 10-K filing) for analysis"
+        )
+        
+        if uploaded_file is not None:
+            # Process PDF
+            try:
+                from tools.pdf_loader_tool import PDFLoaderTool
+                import tempfile
+                import os
+                
+                # Save uploaded file temporarily
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_file:
+                    tmp_file.write(uploaded_file.getvalue())
+                    tmp_path = tmp_file.name
+                
+                # Extract text using PDF loader tool
+                pdf_tool = PDFLoaderTool()
+                extracted_text = pdf_tool._run(source=tmp_path, max_pages=50)
+                
+                # Store in session state
+                st.session_state.pdf_content = extracted_text
+                st.session_state.pdf_filename = uploaded_file.name
+                
+                # Cleanup temp file
+                try:
+                    os.unlink(tmp_path)
+                except:
+                    pass
+                
+                # Show success message
+                st.success(f"✅ PDF uploaded and processed: {uploaded_file.name}")
+                st.info(f"📄 Extracted {len(extracted_text)} characters from PDF")
+                
+                # Show preview
+                with st.expander("📖 Preview Extracted Content"):
+                    st.text_area(
+                        "PDF Content Preview",
+                        value=extracted_text[:2000] + ("..." if len(extracted_text) > 2000 else ""),
+                        height=200,
+                        disabled=True
+                    )
+                
+            except Exception as e:
+                st.error(f"❌ Error processing PDF: {str(e)}")
+                st.session_state.pdf_content = None
+                st.session_state.pdf_filename = None
+    
+    # Show PDF status if available
+    if st.session_state.get('pdf_content'):
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.info(f"📎 PDF loaded: {st.session_state.get('pdf_filename', 'Unknown')} - Ready for analysis")
+        with col2:
+            if st.button("🗑️ Clear PDF", help="Remove the uploaded PDF"):
+                st.session_state.pdf_content = None
+                st.session_state.pdf_filename = None
+                st.rerun()
+    
+    # Clear chat button
+    if st.session_state.messages:
+        if st.button("🗑️ Clear Chat History", help="Clear all chat messages"):
+            st.session_state.messages = []
+            st.rerun()
+    
+    # Display welcome message if chat is empty
+    if not st.session_state.messages:
+        with st.chat_message("assistant"):
+            welcome_msg = """
+            👋 **Welcome to AI Business Analyst Chat!**
+            
+            I can help you with:
+            - 📊 **Company Analysis**: Type "Analyze [TICKER]" (e.g., "Analyze AAPL")
+            - 📄 **PDF Analysis**: Upload a PDF document and I'll incorporate it into analyses
+            - 💬 **Questions**: Ask me anything about stocks or companies
+            
+            **Try these commands:**
+            - `Analyze MSFT` - Generate a business analysis
+            - `Generate report for GOOGL` - Create a comprehensive report
+            - `What can you help me with?` - Get help information
+            
+            Upload a PDF above to enhance your analyses with document insights!
+            """
+            st.markdown(welcome_msg)
+    
+    # Display chat history
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+            # Show metadata if available
+            if message.get("metadata"):
+                with st.expander("ℹ️ Details"):
+                    for key, value in message["metadata"].items():
+                        st.text(f"{key}: {value}")
+    
+    # Chat input
+    if prompt := st.chat_input("Ask me anything about a company or request an analysis..."):
+        # Add user message to chat history
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        
+        # Display user message
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        
+        # Generate assistant response
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                response = process_chat_message(prompt)
+                st.markdown(response)
+        
+        # Add assistant response to chat history
+        st.session_state.messages.append({"role": "assistant", "content": response})
+        
+        # Persist to database if enabled
+        try:
+            persist_conversation_to_db(prompt, response)
+        except Exception as e:
+            if st.session_state.get('verbose', False):
+                st.warning(f"Could not persist conversation: {str(e)[:50]}")
+
+
+def process_chat_message(user_message: str) -> str:
+    """
+    Process a chat message and generate a response.
+    Handles analysis requests, questions, and PDF-based queries.
+    """
+    user_message_lower = user_message.lower()
+    
+    # Check if user wants to analyze a company
+    ticker_match = None
+    import re
+    # Look for ticker symbols (1-5 uppercase letters)
+    ticker_pattern = r'\b([A-Z]{1,5})\b'
+    potential_tickers = re.findall(ticker_pattern, user_message.upper())
+    
+    # Common ticker patterns
+    if any(word in user_message_lower for word in ['analyze', 'analysis', 'report', 'analyze']):
+        # Try to extract ticker
+        for ticker in potential_tickers:
+            if len(ticker) >= 1 and len(ticker) <= 5:
+                ticker_match = ticker
+                break
+        
+        # If no ticker found, ask for one
+        if not ticker_match:
+            return "I can help you analyze a company! Please provide a stock ticker symbol (e.g., 'Analyze AAPL' or 'Generate report for MSFT')."
+        
+        # Run analysis
+        try:
+            from crew.business_analyst_crew import BusinessAnalystCrew
+            
+            crew = BusinessAnalystCrew(verbose=False)
+            
+            # Check if PDF content is available
+            pdf_content = st.session_state.get('pdf_content')
+            
+            # Run quick analysis (faster than full analysis)
+            # PDF content will be included via agent context if available
+            report = crew.quick_analysis(ticker=ticker_match, additional_context=pdf_content)
+            
+            # Store report in session state
+            st.session_state['report'] = report
+            st.session_state['ticker'] = ticker_match
+            st.session_state['timestamp'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            # Return formatted response
+            response = f"✅ **Analysis Complete for {ticker_match}**\n\n"
+            response += "I've generated a comprehensive business analysis report. Here's a summary:\n\n"
+            response += report[:1000] + ("..." if len(report) > 1000 else "")
+            response += "\n\n📊 **Full report is available below.**"
+            
+            # Add metadata about PDF if used
+            if st.session_state.get('pdf_content'):
+                response += f"\n\n📄 *Note: Analysis incorporated insights from uploaded PDF: {st.session_state.get('pdf_filename', 'Unknown')}*"
+            
+            return response
+            
+        except Exception as e:
+            return f"❌ Error during analysis: {str(e)}\n\nPlease try again or check if the ticker symbol is correct."
+    
+    # Check if user is asking about PDF
+    elif any(word in user_message_lower for word in ['pdf', 'document', 'upload', 'file']):
+        if st.session_state.get('pdf_content'):
+            return (f"✅ I have a PDF loaded: **{st.session_state.get('pdf_filename', 'Unknown')}**\n\n"
+                    + "You can ask me to analyze a company and I'll incorporate insights from this document. "
+                    + "For example: 'Analyze AAPL using the PDF' or 'Generate report for MSFT'")
+        else:
+            return "📄 No PDF is currently loaded. Please upload a PDF using the uploader above."
+    
+    # General questions
+    else:
+        # Simple Q&A response
+        responses = {
+            'hello': "Hello! I'm your AI Business Analyst. I can help you analyze companies, generate reports, and answer questions about stocks. How can I assist you?",
+            'help': "I can help you with:\n- Company analysis (e.g., 'Analyze AAPL')\n- PDF document analysis\n- Stock market questions\n\nTry asking: 'Analyze MSFT' or upload a PDF and ask me to analyze it!",
+            'hi': "Hi! I'm here to help with business analysis. What would you like to know?",
+        }
+        
+        for key, value in responses.items():
+            if key in user_message_lower:
+                return value
+        
+        # Default response
+        return (f"I understand you're asking about: {user_message}\n\n"
+                + "I can help you with:\n"
+                + "- **Company Analysis**: Say 'Analyze [TICKER]' (e.g., 'Analyze AAPL')\n"
+                + "- **PDF Analysis**: Upload a PDF and ask me to analyze it\n"
+                + "- **Questions**: Ask me anything about stocks or companies\n\n"
+                + "Try: 'Analyze MSFT' or 'Generate a report for GOOGL'")
+
+
+def persist_conversation_to_db(user_message: str, assistant_message: str):
+    """Persist conversation to database (optional)."""
+    try:
+        from database.db_manager import DatabaseManager
+        db = DatabaseManager()
+        
+        # Create a simple conversation log table if it doesn't exist
+        conn = db._get_connection()
+        cursor = conn.cursor()
+        
+        # Create conversation_history table if it doesn't exist
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS conversation_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_message TEXT NOT NULL,
+                assistant_message TEXT NOT NULL,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                session_id TEXT
+            )
+        """)
+        
+        # Insert conversation
+        session_id = st.session_state.get('session_id', 'default')
+        cursor.execute("""
+            INSERT INTO conversation_history (user_message, assistant_message, session_id)
+            VALUES (?, ?, ?)
+        """, (user_message[:1000], assistant_message[:5000], session_id))
+        
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        # Silently fail - conversation persistence is optional
+        pass
+
+
 def main():
     """Main application entry point."""
     
     # Initialize session state
     if 'report' not in st.session_state:
         st.session_state['report'] = None
+    if 'session_id' not in st.session_state:
+        import uuid
+        st.session_state.session_id = str(uuid.uuid4())
     
-    # Render sidebar and get inputs
+    # Initialize chat state
+    initialize_chat_state()
+    
+    # Mode selector in sidebar
+    with st.sidebar:
+        st.markdown("### 🎯 Mode")
+        app_mode = st.radio(
+            "Choose interface mode",
+            ["💬 Chat Interface", "📊 Form Interface"],
+            help="Chat: Interactive conversation | Form: Traditional form-based analysis"
+        )
+    
+    # Render sidebar and get inputs (for form mode)
     ticker, company_name, analysis_type, period = render_sidebar()
     
-    # Render main content
-    render_main_content(ticker, company_name, analysis_type, period)
+    # Render based on mode
+    if app_mode == "💬 Chat Interface":
+        render_chat_interface()
+        
+        # Show report if available
+        if st.session_state.get('report'):
+            st.markdown("---")
+            display_report(
+                st.session_state['report'],
+                st.session_state.get('ticker', 'N/A'),
+                st.session_state.get('timestamp', datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            )
+    else:
+        # Original form-based interface
+        render_main_content(ticker, company_name, analysis_type, period)
 
 
 if __name__ == "__main__":
